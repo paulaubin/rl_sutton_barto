@@ -29,6 +29,9 @@ class MultiArmedBandit:
 	def reward(self, bandit_index):
 		return np.random.normal(self.mean_value[bandit_index], self.std_value[bandit_index])
 
+	def update_mean_value_with_random_walk(self, mean=0, std=0.01):
+		self.mean_value = self.mean_value + np.random.normal(mean, std, self.nb_arms)
+
 # Define the bandit RL algorithm
 @dataclass
 class BanditRL:
@@ -57,43 +60,58 @@ class BanditRL:
 			#print("exploit with action ", action)
 		return action
 
-	def update(self, action, reward):
+	def update(self, action, reward, alpha=None):
 		self.step += 1
 		self.action_counter[action] += 1
+		#if no parameter is specified, select sample averages action-value method
+		if alpha == None :
+			alpha = 1/self.action_counter[action]
 		self.value_estimate[action] = self.value_estimate[action] \
-			+ 1/self.action_counter[action]*(reward - self.value_estimate[action])
+			+ alpha*(reward - self.value_estimate[action])
+
 
 # Train n_bandit_rl algorithms on a same agent
-def train_bandits_rl(bandit_agent, epsilon, n_steps, n_bandits_rl):
+def train_bandits_rl(bandit_agent, epsilon, n_steps, n_bandits_rl, alpha=None):
 	rwd = np.array(np.zeros((n_bandits_rl, n_steps)))
 	bandit_rl = []
 	act = np.array(np.zeros((n_bandits_rl, n_steps)), dtype = int)
+	best_action = np.array(np.zeros((n_bandits_rl, n_steps)), dtype = int)
+	bandit_agent_mean_value_start = bandit_agent.mean_value
 
 	for i in range(0, n_bandits_rl):
 		# Instanciate a learning algorithm
 		bandit_rl.append(BanditRL(epsilon, n_steps))
+		# Reinit the bandit agent mean value
+		bandit_agent.mean_value = bandit_agent_mean_value_start
 
-		# Init the learning algorithm
-		for j in range(0, bandit_rl[i].value_estimate.size):
+		# Init the learning algorithm for the first time steps corresponding
+		# to the number of possible actions
+		for j in range(0, bandit_rl[i].action_counter.size):
 			act[i,j] = bandit_rl[i].select_action()
+			best_action[i,j] = int(np.argmax(bandit_agent.mean_value))
 			rwd[i,j] = bandit_agent.reward(act[i,j])
-			bandit_rl[i].update(act[i,j], rwd[i,j])
+			bandit_rl[i].update(act[i,j], rwd[i,j], alpha)
+			bandit_agent.update_mean_value_with_random_walk() # comment line for stationnary problem
 
 		# Train the learning algorithm
-		for j in range(bandit_rl[i].value_estimate.size, n_steps):
+		for j in range(bandit_rl[i].action_counter.size, n_steps):
 			act[i,j] = bandit_rl[i].select_action()
+			best_action[i,j] = int(np.argmax(bandit_agent.mean_value))
 			rwd[i,j] = bandit_agent.reward(act[i,j])
-			bandit_rl[i].update(act[i,j], rwd[i,j])
+			bandit_rl[i].update(act[i,j], rwd[i,j], alpha)
+			bandit_agent.update_mean_value_with_random_walk() # comment line for stationnary proble
 
 	avg_reward = np.average(rwd, 0)
 	#print('avg_reward =', repr(avg_reward))
 
 	correct_action = np.array(np.zeros(n_steps))
-	best_action = int(np.argmax(bandit_agent.mean_value))
 	#print('best_action =', repr(best_action))
+	#print('----------------')
 	for j in range(0, n_steps):
 		#print('act[:,j]=', repr(act[:,j]))
-		correct_action[j] = np.count_nonzero(act[:,j] == best_action)/act.shape[0]
+		#print('best_action[j]=', repr(best_action[j]))
+		correct_action[j] = np.count_nonzero(act[:,j] == best_action[:,j])/n_bandits_rl
+		#print('correct_action[j]=', repr(correct_action[j]))
 
 	return avg_reward, correct_action
 
@@ -103,27 +121,26 @@ bandit_agent = MultiArmedBandit(np.random.normal(0, 1, 10), np.array(np.ones(10)
 #	np.array(np.ones(10)))
 print("bandit mean value", repr(bandit_agent.mean_value))
 
-n_steps = 1000
-n_bandits_rl = 2000
+n_steps = 10000
+n_bandits_rl = 1000
 epsilon = 0.1
-avg_reward_0p1, correct_action_0p1 \
+avg_reward_sa, correct_action_sa \
 	= train_bandits_rl(bandit_agent, epsilon, n_steps, n_bandits_rl)
-epsilon = 0.01
-avg_reward_0p01, correct_action_0p01 \
-	= train_bandits_rl(bandit_agent, epsilon, n_steps, n_bandits_rl)
+avg_reward_cst, correct_action_cst \
+	= train_bandits_rl(bandit_agent, epsilon, n_steps, n_bandits_rl, 0.1)
 
 # Plot average reward and correct action
 plt.figure()
 
 # Reward
 plt.subplot(211)
-plt.plot(range(0, n_steps), avg_reward_0p1, range(0, n_steps), avg_reward_0p01, '--r' ,\
+plt.plot(range(0, n_steps), avg_reward_sa, range(0, n_steps), avg_reward_cst, '--r', \
 	[0,n_steps], [np.max(bandit_agent.mean_value), np.max(bandit_agent.mean_value)], '--k')
 plt.ylabel("Average Reward")
 
-# Correc action
+# Correct action
 plt.subplot(212)
-plt.plot(range(0, n_steps), correct_action_0p1, range(0, n_steps), correct_action_0p01, '--r')
+plt.plot(range(0, n_steps), correct_action_sa, range(0, n_steps), correct_action_cst, '--r')
 plt.ylabel('% Optimal Action')
 plt.xlabel('Steps')
 plt.show()
